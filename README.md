@@ -5,18 +5,20 @@ the delay between the operator moving the leader arm and the follower arm being
 commanded to match.
 
 > **Status: early.** This repository does not contain its own code yet. The
-> working starting point is the reference implementation described below.
+> plan is in [docs/roadmap.md](docs/roadmap.md) (Chinese). The sections below
+> describe an earlier system (Alicia-D → FR3) whose measurement and
+> compensation methods are being ported to NexArm; its numbers do not apply here.
 
 ## Reference implementation
 
-`ref-internship-teleop~/` is a local clone of
+`../ref-internship-teleop/` is a local clone of
 [leader-follower-teleop](https://github.com/lfulai223-wq/leader-follower-teleop),
 an Alicia-D leader arm driving a FAIRINO FR3 follower over `ServoJ`, with a
 Gloria-M gripper. It is a separate git repository and is **not tracked** by
 this one, so a fresh clone of this repo will not include it:
 
 ```bash
-git clone https://github.com/lfulai223-wq/leader-follower-teleop.git 'ref-internship-teleop~'
+git clone https://github.com/lfulai223-wq/leader-follower-teleop.git ../ref-internship-teleop
 ```
 
 | File | Purpose |
@@ -89,7 +91,7 @@ vendor SDKs that are not bundled: `alicia_d_sdk` (leader), `gloria_m_sdk`
 load, so they are needed even for dry runs.
 
 ```bash
-cd 'ref-internship-teleop~'
+cd ../ref-internship-teleop
 
 # Leader only: print mapped targets, no follower, no gripper
 python alicia_teleop_fr3.py --no-robot --no-gripper
