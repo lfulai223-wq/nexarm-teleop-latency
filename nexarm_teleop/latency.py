@@ -59,6 +59,26 @@ def windowed_lags_ms(
     return np.array(out)
 
 
+def stale_mask(meas: np.ndarray, min_run: int = 3, min_jump: float = 30.0) -> np.ndarray:
+    """找出"卡住"的读数：连续 min_run 个以上完全相同的值，紧接着一步跳变不小于 min_jump。
+
+    从臂偶尔会在读取失败时返回上一次的旧值，表现为读数不动、随后一步跳到真实位置。
+    真正静止的关节不会被标记，因为静止之后没有跳变。
+    返回布尔数组，True 表示该采样是旧值（每段的第一个采样是真实读数，不标记）。
+    """
+    mask = np.zeros(len(meas), dtype=bool)
+    i = 0
+    n = len(meas)
+    while i < n:
+        j = i
+        while j + 1 < n and meas[j + 1] == meas[i]:
+            j += 1
+        if j - i + 1 >= min_run and j + 1 < n and abs(meas[j + 1] - meas[i]) >= min_jump:
+            mask[i + 1 : j + 1] = True
+        i = j + 1
+    return mask
+
+
 def summarize(values: np.ndarray) -> dict[str, float]:
     if len(values) == 0:
         return {"n": 0, "mean": float("nan"), "p50": float("nan"), "p95": float("nan")}
