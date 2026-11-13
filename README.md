@@ -1,120 +1,168 @@
 # nexarm-teleop-latency
 
-Measuring and reducing end-to-end latency in leader–follower arm teleoperation:
-the delay between the operator moving the leader arm and the follower arm being
-commanded to match.
+Measuring and reducing latency in leader–follower teleoperation of a NexArm
+6-DOF bus-servo arm, with the PC in the loop: read the leader, process, write
+the follower, all timestamped on one clock.
 
-> **Status: early.** This repository does not contain its own code yet. The
-> plan is in [docs/roadmap.md](docs/roadmap.md) (Chinese). The sections below
-> describe an earlier system (Alicia-D → FR3) whose measurement and
-> compensation methods are being ported to NexArm; its numbers do not apply here.
+**Status:** work in progress. The driver, measurement tools and a first
+compensation result are done. See [what is not done yet](#limitations-and-open-items).
 
-## Reference implementation
+## Result so far
 
-`../ref-internship-teleop/` is a local clone of
-[leader-follower-teleop](https://github.com/lfulai223-wq/leader-follower-teleop),
-an Alicia-D leader arm driving a FAIRINO FR3 follower over `ServoJ`, with a
-Gloria-M gripper. It is a separate git repository and is **not tracked** by
-this one, so a fresh clone of this repo will not include it:
+Without compensation the follower trails the commanded trajectory by about
+84 ms on average. Linear feedforward prediction brings that to about 20 ms.
+
+| Configuration | Mean lag | P95 lag | Tracking error (RMS) | Jitter (RMS) |
+|---|---|---|---|---|
+| No prediction | 84.2 ms | 116.0 ms | 27.8 counts | 1.58 counts |
+| Uniform 80 ms lookahead | 21.9 ms | 56.0 ms | 12.8 counts | 1.87 counts |
+| Per-joint lookahead | 19.4 ms | 50.0 ms | 12.1 counts | 1.87 counts |
+
+Joints 1–5 pooled, 366 two-second windows per row, three replays of the same
+40 s recorded trajectory. One count is 1/4096 of a revolution. Conditions and
+caveats are below; they matter.
+
+![Lag, tracking error and jitter against prediction lookahead](docs/img/lookahead_sweep.png)
+
+Lag falls roughly linearly with lookahead. Tracking error bottoms out near
+80 ms and rises again at 100 ms, where the prediction overshoots; jitter rises
+throughout. That puts the useful range at 60–80 ms. (This sweep is from a
+different, 27.5 s trajectory: six settings, three replays each.)
+
+![Mean lag by joint for three configurations](docs/img/per_joint_lag.png)
+
+Joints differ: the shoulder is the slowest at 109 ms, the base and wrist pitch
+the fastest at 68 ms. A single lookahead leaves a 37 ms spread between joints;
+per-joint values cut it to 10 ms.
+
+## Where the delay is
+
+| Segment | Measured |
+|---|---|
+| Read leader (6 joints, one request) | 13.8 ms mean, 14.1 ms P95 |
+| PC processing (leader reply to command written) | about 0.08 ms |
+| Read follower (6 joints, bridge mode) | 4.6 ms mean, 4.8 ms P95 |
+| Follower execution, 10° step: first motion / 50% / 90% | 31–48 ms / 72–114 ms / 113–174 ms |
+
+The servo's own response dominates. That is why filtering alone cannot help
+here (it only adds delay) and prediction can.
+
+![Follower step response for three joints](docs/img/step_response.png)
+
+The leader read is slow because its firmware polls the six servos one at a
+time with a fixed wait after each. With one leader read and one follower read
+per cycle the loop tops out near 54 Hz; the experiments run at 50 Hz.
+
+## How it works
+
+```
+leader arm ──USB──▶ PC ──USB──▶ follower arm
+ (ESP32)            │            (ESP32 + AT32 co-processor)
+                    ├─ read 6 joint positions          t_request, t_reply
+                    ├─ map leader → follower
+                    ├─ predict: x + v · lookahead      (optional)
+                    ├─ clamp step per cycle
+                    ├─ write 6 joint positions         t_write
+                    └─ read follower positions back    t_request, t_reply
+```
+
+Both arms speak a framed serial protocol at 1 Mbps. The follower is switched
+into a bridge mode in which its ESP32 forwards position reads and writes to
+the servo bus. Every send and receive is stamped with `time.perf_counter_ns()`.
+
+**Measuring lag.** A hand on the leader is not repeatable, so a recorded leader
+trajectory is replayed as a virtual leader. Lag is the time shift that best
+aligns the commanded trajectory with the follower's measured position, fitted
+per two-second window to get a distribution. Negative lags are allowed, so
+over-prediction shows up instead of being clipped at zero.
+
+**Prediction.** Velocity is a low-passed finite difference (5 Hz cutoff), and
+the command is the position extrapolated by the lookahead, with a cap on the
+lead.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| [nexarm_teleop/protocol.py](nexarm_teleop/protocol.py) | Frame build and parse, leader-to-follower mapping |
+| [nexarm_teleop/driver.py](nexarm_teleop/driver.py) | Serial driver with timestamps on every transfer |
+| [nexarm_teleop/predictor.py](nexarm_teleop/predictor.py) | Linear feedforward prediction, per-joint lookahead |
+| [nexarm_teleop/latency.py](nexarm_teleop/latency.py) | Time-shift lag estimation, stale-reading detection |
+| [scripts/](scripts/) | Hardware checks, teleoperation, step response, replay, analysis, figures |
+| [tests/](tests/) | Unit tests that need no hardware |
+| [results/](results/) | Summary tables behind the numbers above |
+| [docs/roadmap.md](docs/roadmap.md) | Plan and the full measurement log, including dead ends (Chinese) |
+
+## Running it
+
+Needs Python 3.12, a NexArm leader and follower on USB, and membership of the
+`dialout` group.
 
 ```bash
-git clone https://github.com/lfulai223-wq/leader-follower-teleop.git ../ref-internship-teleop
+python3 -m venv .venv
+.venv/bin/pip install numpy matplotlib pyserial pytest
+
+.venv/bin/python -m pytest tests                 # no hardware needed
+
+.venv/bin/python scripts/probe_ports.py          # read-only: which port is which
+.venv/bin/python scripts/check_bridge.py         # read-only: read timing on both arms
+.venv/bin/python scripts/teleop.py --duration 40 # teleoperate and record a trajectory
+.venv/bin/python scripts/step_response.py        # follower step response
+.venv/bin/python scripts/replay.py results/logs/teleop_XXXX.csv --lookahead 80
+.venv/bin/python scripts/replay.py results/logs/teleop_XXXX.csv --lookahead 65 110 80 65 95 0
+.venv/bin/python scripts/analyze_replay.py results/logs/batch2/replay_la*.csv
+.venv/bin/python scripts/make_figures.py
 ```
 
-| File | Purpose |
-|------|---------|
-| `alicia_teleop_fr3.py` | Main teleop loop: filtering, spring tracking, prediction, latency probe, gripper |
-| `gripper_teleop.py` | Standalone gripper teleop (MIT torque mode, torque-limited) |
-| `record.py` | Record leader trajectories (`single`, `dataset`) and analyse them (`analyze`) |
-| `integration_example.py` | Consume live leader data via `LeaderArmStream` (callback or queue) |
-| `sim_fr3.py` | Mock FR3 with a live matplotlib view, used by `--sim` |
-| `tremor_suppression_test.py` | Numerical check of 8–12 Hz tremor attenuation by the two filter stages |
-| `Spline/` | Spline and servo experiments |
+Port paths are set in [nexarm_teleop/\_\_init\_\_.py](nexarm_teleop/__init__.py)
+and are specific to one machine: the two boards have identical USB-serial
+chips with no serial number, so they are told apart by USB port.
 
-Its own README predates the latency probe, the look-ahead prediction, the
-gripper channel and `record.py analyze`, and its defaults table is out of date.
-The `CONFIG` block at the top of `alicia_teleop_fr3.py` is the source of truth.
+The follower must not be in its wireless (ESP-NOW) sync mode while the PC is
+driving it, or the two command sources fight.
 
-## Where the latency comes from
+**Safety.** The follower moves under program control. Keep its workspace
+clear. The scripts refuse to start if leader and follower poses differ too
+much, ramp in over a few seconds, limit the step per cycle, and the step test
+aborts if a joint stops short of its target.
 
-Each stage of the reference pipeline trades smoothness for delay:
+## Test conditions
 
-```
-leader raw angles
-   ├─▶ [1] OneEuro adaptive low-pass     FILTER_MINCUTOFF, FILTER_BETA
-   ├─▶ [2] fixed first-order low-pass    TREMOR_CUTOFF
-   ├─▶ [3] axis mapping + joint limits
-   ├─▶ [4] critically damped spring      SPRING_OMEGA, MAX_ACCEL, MAX_VEL
-   ├─▶ [5] look-ahead prediction         PREDICT_LOOKAHEAD_MS  (subtracts delay)
-   └─▶ ServoJ @ RATE ─▶ follower
-```
+- Control rate 50 Hz (achieved 50.0 Hz in every replay, no timeouts).
+- Servo motion parameters: acceleration 100, speed limit 2000 (the vendor
+  defaults). On a 10° step these made no measurable difference.
+- No payload. Arm clear of the table.
+- Trajectories are hand-dragged leader motion, replayed: peak joint speed about
+  130–200 °/s.
+- Lag is fitted on two-second windows with a one-second hop, keeping windows
+  with at least 80 counts of motion.
+- Timestamps for a position are the midpoint of its request and reply.
 
-Rough contributions at the current defaults (theoretical, for steady motion):
+## Limitations and open items
 
-| Stage | Default | Approximate delay |
-|-------|---------|-------------------|
-| Control period | `RATE = 125` Hz | 8 ms per cycle |
-| OneEuro | `FILTER_MINCUTOFF = 3.0` Hz, `FILTER_BETA = 0.05` | up to ~53 ms at rest, less as speed rises |
-| Fixed low-pass | `TREMOR_CUTOFF = 5.0` Hz | ~32 ms (1 / 2πf) |
-| Spring | `SPRING_OMEGA = 20` rad/s | ~100 ms (2 / ωₙ) |
-| Prediction | `PREDICT_LOOKAHEAD_MS = 10` | −10 ms |
+- **The lag excludes the leader read.** Replay bypasses the real leader, so
+  about 14 ms of acquisition is not in the numbers above.
+- **No external ground truth yet.** Positions are read back over the same
+  serial link whose delay is being measured. A high-speed video check is
+  planned.
+- **Moderate motion only.** No fast moves or hard stops, and overshoot is not
+  measured separately.
+- **The gripper is not compensated.** Its lag is about 140 ms and is set by
+  rate limiting, not by anything prediction can fix: the leader gripper maps
+  to the follower with a gain of 4.
+- **The follower sometimes returns a stale reading** for joint 2 (the same
+  value for several cycles, then a jump faster than the servo's speed limit).
+  These samples are detected and dropped from the analysis.
+- **Per-joint lookahead values were set by hand** from one measurement, not
+  searched.
+- Not done: porting the input filters, comparing control rates, and the
+  compatibility write-up for the stock LeRobot SO-101 driver.
 
-The spring is the largest single term. Raising `SPRING_OMEGA` or
-`TREMOR_CUTOFF` cuts delay at the cost of tremor rejection and smoothness.
+## Background
 
-## Measuring it
-
-The teleop loop has a built-in probe, on by default. For each joint it times
-how long it takes from the raw leader angle moving more than a threshold (2°)
-until the angle sent to `ServoJ` has moved by the same amount, and prints:
-
-```
-[延迟埋点] J3 端到端延迟: 96.0 ms
-```
-
-Two things to know when reading these numbers:
-
-- It stops at **command sent**. Follower controller and mechanical lag are not included.
-- It times a displacement, so slow drags inflate the result with the time the
-  hand itself took to travel 2°. Use quick, decisive single-joint moves.
-
-Relevant flags: `--no-latency-probe`, `--latency-probe-threshold`,
-`--no-predict`, `--predict-lookahead-ms`, plus `--spring-omega`,
-`--tremor-cutoff`, `--filter-mincutoff`, `--filter-beta`, `--no-filter`.
-
-## Running the reference
-
-Requirements: Python 3.10+, `numpy`, `matplotlib` (for `--sim`), and three
-vendor SDKs that are not bundled: `alicia_d_sdk` (leader), `gloria_m_sdk`
-(gripper) and the FAIRINO SDK, importable as `fairino` or placed under
-`Spline/fairino390/linux/`. The leader and gripper SDKs are imported at module
-load, so they are needed even for dry runs.
-
-```bash
-cd ../ref-internship-teleop
-
-# Leader only: print mapped targets, no follower, no gripper
-python alicia_teleop_fr3.py --no-robot --no-gripper
-
-# Mock follower with live plot
-python alicia_teleop_fr3.py --sim --no-gripper
-
-# Real hardware (teach pendant in AUTO, robot enabled, faults cleared)
-python alicia_teleop_fr3.py --robot-ip 192.168.57.2 --gripper-port /dev/ttyACM1
-
-# A/B the prediction stage
-python alicia_teleop_fr3.py --sim --no-gripper --no-predict
-python alicia_teleop_fr3.py --sim --no-gripper --predict-lookahead-ms 20
-
-# Record a trajectory, then report how much of it is accelerating or reversing
-python record.py single --output trajectories/demo_001.csv
-python record.py analyze trajectories/demo_001.csv
-```
-
-## Safety
-
-The follower moves in real time. Keep the workspace clear and a stop within
-reach, validate axis mapping with `--no-robot` or `--sim` first, and note that
-the current defaults (`MAX_VEL = 150` °/s, `MAX_ACCEL = 800` °/s²) are tuned
-for low latency and are above the reference's stated standard values of 60 and
-500.
+This applies a measure-then-compensate method used earlier on a different
+pair of arms (an Alicia-D leader driving a FAIRINO FR3 over `ServoJ`,
+[leader-follower-teleop](https://github.com/lfulai223-wq/leader-follower-teleop)).
+The hardware, the protocol and where the delay sits are all different here,
+so nothing was carried over as a number; everything above was measured on
+NexArm.
