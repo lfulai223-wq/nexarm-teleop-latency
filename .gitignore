@@ -218,3 +218,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Vendor-supplied NexArm package (local only, not for publication)
+vendor-nexarm/
+
+# Personal job-hunting notes (local only, never publish)
+机器人求职补强项目清单.docx
+*.docx
+notes/
+
+# Raw experiment logs (large, regenerate locally)
+results/logs/
