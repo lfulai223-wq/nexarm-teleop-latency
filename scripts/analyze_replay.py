@@ -40,15 +40,22 @@ def main() -> None:
     args = ap.parse_args()
     args.pool_label = "+".join(str(j) for j in args.joints)
 
-    groups: dict[float, list[Path]] = defaultdict(list)
+    # 文件名形如 replay_la40_日期_时间.csv；标签可以是数字（统一前瞻）或文字（如 PJ 表示逐关节）
+    groups: dict[str, list[Path]] = defaultdict(list)
     for p in args.logs:
-        m = re.search(r"replay_la([\d.]+)_", p.name)
+        m = re.search(r"replay_la(.+?)_\d{8}_\d{6}", p.name)
         if m:
-            groups[float(m.group(1))].append(p)
+            groups[m.group(1)].append(p)
+
+    def order(label: str):
+        try:
+            return (0, float(label), "")
+        except ValueError:
+            return (1, 0.0, label)
 
     out_rows = []
     print("前瞻(ms) 关节 回放次数 窗数 | 滞后 均值 / P50 / P95 (ms) | 跟踪误差RMS | 抖动RMS")
-    for la in sorted(groups):
+    for la in sorted(groups, key=order):
         pooled = np.array([])
         for j in range(JOINT_COUNT):
             lags, errs, jits, stale = [], [], [], 0
@@ -79,7 +86,7 @@ def main() -> None:
             }
             out_rows.append(row)
             print(
-                f"  {la:5g}    {j + 1}     {len(lags)}     {s['n']:3d}  |  {s['mean']:6.1f} / {s['p50']:6.1f} / {s['p95']:6.1f}"
+                f"  {la:>5}    {j + 1}     {len(lags)}     {s['n']:3d}  |  {s['mean']:6.1f} / {s['p50']:6.1f} / {s['p95']:6.1f}"
                 f"       |   {row['track_rms']:6.1f}    |  {row['jitter_rms']:5.2f}" + (f"   (剔除 {stale} 个旧值)" if stale else "")
             )
         s = summarize(pooled)
@@ -91,7 +98,7 @@ def main() -> None:
             "lag_mean_ms": round(s["mean"], 1), "lag_p50_ms": round(s["p50"], 1), "lag_p95_ms": round(s["p95"], 1),
             "track_rms": round(float(tr), 1), "jitter_rms": round(float(ji), 2),
         })
-        print(f"  {la:5g}   合并   {len(groups[la])}     {s['n']:3d}  |  {s['mean']:6.1f} / {s['p50']:6.1f} / {s['p95']:6.1f}       |   {tr:6.1f}    |  {ji:5.2f}\n")
+        print(f"  {la:>5}   合并   {len(groups[la])}     {s['n']:3d}  |  {s['mean']:6.1f} / {s['p50']:6.1f} / {s['p95']:6.1f}       |   {tr:6.1f}    |  {ji:5.2f}\n")
 
     if args.out and out_rows:
         args.out.parent.mkdir(parents=True, exist_ok=True)

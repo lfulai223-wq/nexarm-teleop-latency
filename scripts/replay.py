@@ -47,7 +47,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("trajectory", type=Path)
     ap.add_argument("--rate", type=float, default=50.0, help="控制频率 (Hz)")
-    ap.add_argument("--lookahead", type=float, default=0.0, help="前馈预测的前瞻时长 (ms)，0 为关闭")
+    ap.add_argument("--lookahead", type=float, nargs="+", default=[0.0],
+                    help="前馈预测的前瞻时长 (ms)，0 为关闭。给 1 个值表示各关节相同，给 6 个值表示逐关节设置")
     ap.add_argument("--vel-cutoff", type=float, default=5.0, help="速度估计的低通截止频率 (Hz)")
     ap.add_argument("--skip", type=float, default=2.5, help="跳过轨迹开头多少秒（原日志的启动过渡段）")
     ap.add_argument("--ramp", type=float, default=2.0, help="先用多少秒把从臂移到轨迹起点")
@@ -61,7 +62,12 @@ def main() -> None:
     t_traj, target = load_trajectory(args.trajectory, args.skip)
     duration = float(t_traj[-1])
     period = 1.0 / args.rate
-    predictor = LinearPredictor(JOINT_COUNT, args.lookahead / 1000.0, args.vel_cutoff, max_lead=150.0) if args.lookahead > 0 else None
+    if len(args.lookahead) not in (1, JOINT_COUNT):
+        raise SystemExit(f"--lookahead 需要 1 个或 {JOINT_COUNT} 个值")
+    per_joint = len(args.lookahead) == JOINT_COUNT
+    la_list = [x / 1000.0 for x in (args.lookahead if per_joint else args.lookahead * JOINT_COUNT)]
+    la_text = "逐关节 " + "/".join(f"{x:g}" for x in args.lookahead) if per_joint else f"{args.lookahead[0]:g}"
+    predictor = LinearPredictor(JOINT_COUNT, la_list, args.vel_cutoff, max_lead=150.0) if max(la_list) > 0 else None
 
     def target_at(t: float) -> list[float]:
         return [float(np.interp(t, t_traj, target[:, j])) for j in range(JOINT_COUNT)]
@@ -127,7 +133,7 @@ def main() -> None:
 
     if len(rows) < 50:
         return
-    tag = args.label or f"la{args.lookahead:g}"
+    tag = f"la{args.label}" if args.label else ("laPJ" if per_joint else f"la{args.lookahead[0]:g}")
     args.log_dir.mkdir(parents=True, exist_ok=True)
     log_path = args.log_dir / f"replay_{tag}_{datetime.now():%Y%m%d_%H%M%S}.csv"
     header = (
@@ -145,7 +151,7 @@ def main() -> None:
     a = np.array(rows, dtype=float)
     t_ref = (a[:, 0] - a[0, 0]) / 1e9
     t_meas = ((a[:, 14] + a[:, 15]) / 2 - a[0, 0]) / 1e9
-    print(f"\n前瞻 {args.lookahead:g} ms；{len(rows)} 个周期，实际 {(len(rows) - 1) / t_ref[-1]:.1f} Hz；超时 {timeouts}，被限幅 {clamped}")
+    print(f"\n前瞻 {la_text} ms；{len(rows)} 个周期，实际 {(len(rows) - 1) / t_ref[-1]:.1f} Hz；超时 {timeouts}，被限幅 {clamped}")
     print("关节 | 整段滞后(ms) | 分窗滞后 均值/P50/P95 (ms, 窗数) | 跟踪误差RMS(计数) | 抖动RMS(计数)")
     for j in range(JOINT_COUNT):
         ref, meas = a[:, 1 + j], a[:, 16 + j]

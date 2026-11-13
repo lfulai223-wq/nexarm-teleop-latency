@@ -11,8 +11,9 @@ import math
 
 
 class LinearPredictor:
-    def __init__(self, n: int, lookahead_s: float, vel_cutoff_hz: float = 5.0, max_lead: float = 300.0):
-        self.lookahead_s = lookahead_s
+    def __init__(self, n: int, lookahead_s: float | list[float], vel_cutoff_hz: float = 5.0, max_lead: float = 300.0):
+        # 可以给一个统一的前瞻时长，也可以每个关节给一个
+        self.lookahead_s = list(lookahead_s) if isinstance(lookahead_s, (list, tuple)) else [lookahead_s] * n
         self.vel_cutoff_hz = vel_cutoff_hz
         self.max_lead = max_lead  # 提前量上限（计数），防止速度估计出错时指令飞出去
         self._x: list[float] | None = None
@@ -35,7 +36,7 @@ class LinearPredictor:
         for i, xi in enumerate(x):
             raw_v = (xi - self._x[i]) / dt
             self._v[i] += alpha * (raw_v - self._v[i])
-            lead = max(-self.max_lead, min(self.max_lead, self._v[i] * self.lookahead_s))
+            lead = max(-self.max_lead, min(self.max_lead, self._v[i] * self.lookahead_s[i]))
             out.append(xi + lead)
         self._x, self._t = list(x), t
         return out
