@@ -134,6 +134,7 @@ lead.
 | [scripts/](scripts/) | Hardware checks, teleoperation, step response, replay, analysis, video check, figures |
 | [tests/](tests/) | Unit tests that need no hardware |
 | [results/](results/) | Summary tables behind the numbers above |
+| [lerobot_plugin/](lerobot_plugin/) | LeRobot teleoperator plugin that adds the prediction to the vendor's NexArm leader |
 | [docs/roadmap.md](docs/roadmap.md) | Plan and the full measurement log, including dead ends (Chinese) |
 
 ## Running it
@@ -206,6 +207,27 @@ aborts if a joint stops short of its target.
   joint past 100 ms.
 - Not done: lighter filter settings that might trade less delay for the
   jitter reduction.
+
+## Using the prediction inside LeRobot
+
+[lerobot_plugin/](lerobot_plugin/) is a LeRobot teleoperator plugin,
+`nexarm_leader_predictive`: the vendor's `nexarm_leader` (from the vendor's
+LeRobot 0.5.2 fork) plus the per-joint feedforward prediction from this
+repository and a per-call step limit. LeRobot imports it automatically once
+installed in the same environment:
+
+```bash
+pip install -e . -e lerobot_plugin      # in the environment that has the vendor's LeRobot
+lerobot-teleoperate \
+  --robot.type=nexarm_follower --robot.port=<follower port> \
+  --robot.disable_torque_on_disconnect=false \
+  --teleop.type=nexarm_leader_predictive --teleop.port=<leader port> \
+  --fps=50
+```
+
+Unlike `scripts/teleop.py`, LeRobot does not check that the two arms start in
+the same pose. Line them up before starting. Offline tests:
+`lerobot_plugin/tests/`.
 
 ## Compatibility with the stock LeRobot SO-101 driver
 

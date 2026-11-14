@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# 名字必须以 lerobot_teleoperator_ 开头：LeRobot 的脚本启动时会自动导入这类包
+name = "lerobot_teleoperator_nexarm_predictive"
+version = "0.1.0"
+description = "NexArm leader for LeRobot with per-joint feedforward prediction"
+requires-python = ">=3.12"
+dependencies = ["nexarm-teleop"]
+
+[tool.setuptools]
+packages = ["lerobot_teleoperator_nexarm_predictive"]
