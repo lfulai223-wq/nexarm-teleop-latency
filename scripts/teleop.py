@@ -175,6 +175,8 @@ def main() -> None:
                 next_tick = time.perf_counter()  # 跟不上目标频率，不追赶
     except KeyboardInterrupt:
         print("\n收到 Ctrl+C，停止发指令。")
+    except ConnectionError as e:
+        print(f"\n{e}\n已停止。已经采到的数据照常保存。")
     finally:
         try:
             if not args.stay:
