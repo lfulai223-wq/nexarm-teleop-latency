@@ -7,7 +7,7 @@
     Ctrl+C 随时停止：停止发指令，从臂保持在当前位置。
 
 保护措施：
-  - 启动时主从姿态差太大就拒绝启动
+  - 启动时主从姿态差太大，不发运动指令，实时提示操作者把主臂摆到和从臂相近的姿态
   - 启动后用 --ramp 秒从从臂当前位置平滑过渡到主臂目标
   - 每周期每个关节的指令变化量不超过 --max-step
   - 主臂读数贴近 0 或 4095 视为坏数据，沿用上一周期的值
@@ -43,7 +43,8 @@ def main() -> None:
     ap.add_argument("--duration", type=float, default=30.0, help="运行多少秒")
     ap.add_argument("--rate", type=float, default=50.0, help="目标控制频率 (Hz)")
     ap.add_argument("--max-step", type=int, default=60, help="每周期每关节最大指令变化（计数，4096 为一圈）")
-    ap.add_argument("--max-start-diff", type=int, default=500, help="启动时允许的最大主从姿态差（计数）")
+    ap.add_argument("--max-start-diff", type=int, default=500, help="启动时允许的最大主从姿态差（计数，500 约 44°）")
+    ap.add_argument("--align-timeout", type=float, default=90.0, help="姿态差太大时，最多等多少秒让操作者对齐")
     ap.add_argument("--ramp", type=float, default=2.0, help="启动过渡时间（秒）")
     ap.add_argument("--acc", type=int, default=100, help="舵机加速度参数 0–254（0 为不限）")
     ap.add_argument("--speed", type=int, default=2000, help="舵机速度上限（0 为不限）")
@@ -80,12 +81,27 @@ def main() -> None:
     try:
         follower.enter_bridge_mode()
         start_follower = follower.read_positions().positions
-        start_target = map_leader_to_follower(leader.read_positions().positions)
-        diff = [abs(a - b) for a, b in zip(start_follower, start_target)]
+        # 主从姿态差太大时不发任何运动指令，而是实时提示，等操作者把主臂摆到和从臂相近的姿态。
+        # 夹爪不参与这项检查：它开合幅度大、不会撞到东西，启动过渡会把它慢慢带到位。
+        names = ["底座", "肩", "肘", "腕俯仰", "腕旋转"]
+        give_up = time.perf_counter() + args.align_timeout
+        waited = False
+        while True:
+            start_target = map_leader_to_follower(leader.read_positions().positions)
+            diff = [abs(a - b) for a, b in zip(start_follower, start_target)]
+            far = [i for i in range(5) if diff[i] > args.max_start_diff]
+            if not far:
+                break
+            if time.perf_counter() > give_up:
+                print()
+                raise SystemExit(f"{args.align_timeout:.0f} 秒内主从姿态没有对齐，退出。")
+            parts = "，".join(f"关节{i + 1}（{names[i]}）差 {diff[i] * 360 / 4096:.0f}°" for i in far)
+            print(f"\r等待对齐，请把主臂摆成和从臂一样的姿态：{parts}        ", end="", flush=True)
+            waited = True
+            time.sleep(0.2)
+        if waited:
+            print("\n已对齐。")
         print(f"从臂当前 {start_follower}\n主臂目标 {start_target}\n姿态差   {diff}")
-        # 夹爪不参与这项检查：它开合幅度大、不会撞到东西，启动过渡会把它慢慢带到位
-        if max(diff[:5]) > args.max_start_diff:
-            raise SystemExit(f"关节姿态差 {max(diff[:5])} 超过 {args.max_start_diff}，拒绝启动。请把两条臂摆成相近的姿态。")
 
         follower.set_motion_params(args.acc, args.speed)
         follower.set_torque(True)
