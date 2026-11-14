@@ -204,9 +204,19 @@ aborts if a joint stops short of its target.
 - **Per-joint lookahead values were set by hand** from one measurement. A
   fitted search was tried and did no better; a proper search would sweep each
   joint past 100 ms.
-- Not done: the compatibility write-up for the stock LeRobot SO-101 driver,
-  and lighter filter settings that might trade less delay for the jitter
-  reduction.
+- Not done: lighter filter settings that might trade less delay for the
+  jitter reduction.
+
+## Compatibility with the stock LeRobot SO-101 driver
+
+The vendor says the servos are SO-101 / LeRobot compatible. Sending the stock
+driver's own read-only Feetech packets to the leader's USB port shows that
+the leader forwards them to the servo bus and returns the replies, and the
+servos speak the Feetech STS protocol. Five of six report model 777
+(STS3215); the wrist-roll servo reports 258, so the stock `so101_leader` is
+expected to stop at its model check. The follower has not been probed in its
+normal mode yet. Details, register dump and caveats:
+[docs/compatibility.md](docs/compatibility.md) (Chinese).
 
 ## Background
 

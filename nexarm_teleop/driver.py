@@ -127,6 +127,12 @@ class NexArmPort:
 
         从臂刚重启时要几秒才能响应，所以这里反复尝试，直到能读到位置为止。
         """
+        # 已经在桥接模式就不再发 68 号：桥接模式下它会被原样转给协处理器（见 exit_bridge_mode）
+        try:
+            self.read_positions(timeout_s=0.1)
+            return
+        except TimeoutError:
+            pass
         deadline = time.perf_counter() + ready_timeout_s
         while True:
             self.send(p.CMD_BRIDGE_MODE, bytes([1]))
@@ -141,13 +147,11 @@ class NexArmPort:
                 time.sleep(0.5)
 
     def exit_bridge_mode(self) -> bool:
-        """从臂专用：退出桥接模式。固件的做法是直接重启 ESP32。
+        """从臂专用：退出桥接模式——实际上做不到，所以这里什么也不发。
 
-        用在清理阶段，所以串口已经断开时不抛异常，只返回 False。
+        进入桥接模式后，固件把串口回调换成了桥接回调，而桥接回调不处理 68 号指令，
+        会把它原样转给舵机协处理器（AT32）。所以"68 号 + 参数 0"既不会退出，也不会像源码注释说的那样重启，
+        反而会往协处理器发一条含义不明的指令。实测：发过退出指令后从臂仍然回复读位置（2026-11-14）。
+        只有给从臂断电重启才能回到普通模式。保留这个方法是为了让调用方的收尾代码不用改。
         """
-        try:
-            self.send(p.CMD_BRIDGE_MODE, bytes([0]))
-        except ConnectionLost:
-            return False
-        time.sleep(0.1)
-        return True
+        return False
