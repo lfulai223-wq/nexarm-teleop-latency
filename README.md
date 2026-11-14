@@ -33,6 +33,8 @@ follower physically moving, at the 50% point of each move:
 | No prediction | 100.1 ms ±11.2 (12 moves) | 86.4 ms ±1.7 |
 | Per-joint lookahead | 68.6 ms ±12.3 (9 moves) | 51.9 ms ±3.8 |
 
+![End-to-end delay split into the part the serial log cannot see and the part it can](docs/img/latency_breakdown.png)
+
 The serial log reads 14–17 ms low, about the time it takes to read the leader,
 which it cannot see. Prediction saves about 31 ms end to end; the price is
 follower overshoot rising from about 12% to about 32% of the move.
@@ -67,6 +69,32 @@ here (it only adds delay) and prediction can.
 The leader read is slow because its firmware polls the six servos one at a
 time with a fixed wait after each. With one leader read and one follower read
 per cycle the loop tops out near 54 Hz; the experiments run at 50 Hz.
+
+## Other things tried
+
+Same 40 s trajectory, replayed; joints 1–5 pooled; "no prediction at 50 Hz"
+is the reference row.
+
+| Change | Mean lag | P95 lag | Tracking error | Note |
+|---|---|---|---|---|
+| None (50 Hz, no prediction) | 82.7 ms | 110.0 ms | 27.7 | fresh repeat of the reference, 84.2 ms a day earlier |
+| Control rate 25 Hz | 95.0 ms | 119.9 ms | 32.4 | |
+| Control rate 100 Hz | 76.0 ms | 115.0 ms | 24.5 | |
+| Input filters (One Euro 3 Hz + 5 Hz low-pass) | 139.9 ms | 174.8 ms | 43.9 | jitter 1.58 → 1.24 |
+| Input filters + per-joint lookahead | 71.7 ms | 107.4 ms | 24.3 | |
+| Per-joint lookahead from a fitted search | 18.1 ms | 48.0 ms | 12.9 | wrist roll over-compensated (0.4 ms) |
+
+- **Rate.** Doubling from 50 to 100 Hz saves about 7 ms, roughly half of the
+  10 ms shorter period, and does not change smoothness (acceleration RMS on a
+  common 25 Hz grid: 2603 vs 2871 counts/s²). Live teleoperation cannot use it:
+  reading the leader takes 14 ms, which caps the loop near 70 Hz, or 54 Hz when
+  the follower is also read back.
+- **Filters.** The filters carried over from the earlier system add about
+  56 ms and buy a 20% jitter reduction. The leader's encoder signal is already
+  clean, so they are not worth it here at these settings.
+- **Searching the lookahead.** Fitting each joint's optimum from the sweep did
+  not beat the hand-set values; the fit extrapolated past the measured range
+  for the two slowest joints.
 
 ## How it works
 
@@ -173,10 +201,12 @@ aborts if a joint stops short of its target.
 - **The follower sometimes returns a stale reading** for joint 2 (the same
   value for several cycles, then a jump faster than the servo's speed limit).
   These samples are detected and dropped from the analysis.
-- **Per-joint lookahead values were set by hand** from one measurement, not
-  searched.
-- Not done: porting the input filters, comparing control rates, and the
-  compatibility write-up for the stock LeRobot SO-101 driver.
+- **Per-joint lookahead values were set by hand** from one measurement. A
+  fitted search was tried and did no better; a proper search would sweep each
+  joint past 100 ms.
+- Not done: the compatibility write-up for the stock LeRobot SO-101 driver,
+  and lighter filter settings that might trade less delay for the jitter
+  reduction.
 
 ## Background
 

@@ -155,11 +155,43 @@ def step_response() -> None:
     plt.close(fig)
 
 
+def latency_breakdown() -> None:
+    """端到端延迟（视频，走到 50%）拆成两段：串口日志看不到的部分 + 串口日志看到的部分。"""
+    rows = read(ROOT / "results" / "video_latency.csv")
+
+    def get(video: str, source: str) -> float:
+        return float(next(r["d50_ms"] for r in rows if r["video"] == video and r["source"] == source))
+
+    configs = [("flick_none.MOV", "No prediction"), ("flick_pred.MOV", "Per-joint lookahead")]
+    fig, ax = plt.subplots(figsize=(9, 2.9), constrained_layout=True)
+    for k, (video, label) in enumerate(configs):
+        total, seen = get(video, "视频"), get(video, "串口日志")
+        unseen = total - seen
+        y = len(configs) - 1 - k
+        ax.barh(y, unseen, height=0.42, color=SERIES[0], edgecolor=SURFACE, linewidth=2,
+                label="leader moves → PC has the reading (video − log)" if k == 0 else None)
+        ax.barh(y, seen, left=unseen, height=0.42, color=SERIES[1], edgecolor=SURFACE, linewidth=2,
+                label="PC has the reading → follower at 50% (serial log)" if k == 0 else None)
+        ax.annotate(f"{unseen:.0f}", (unseen / 2, y), ha="center", va="center", color=SURFACE, fontsize=9, fontweight="bold")
+        ax.annotate(f"{seen:.0f}", (unseen + seen / 2, y), ha="center", va="center", color=SURFACE, fontsize=9, fontweight="bold")
+        ax.annotate(f"{total:.0f} ms", (total, y), textcoords="offset points", xytext=(6, 0), va="center", color=TEXT)
+    ax.set_yticks(range(len(configs)), [c[1] for c in reversed(configs)])
+    ax.set_xlim(0, 120)
+    ax.set_xlabel("ms, at 50% of a base-joint flick (240 fps video)")
+    ax.grid(axis="x", color=GRID, linewidth=1)
+    ax.grid(axis="y", visible=False)
+    ax.set_title("End-to-end delay, leader motion to follower motion")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.32), ncols=2)
+    fig.savefig(OUT / "latency_breakdown.png", dpi=160)
+    plt.close(fig)
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     lookahead_sweep()
     per_joint_lag()
     step_response()
+    latency_breakdown()
     print(f"figures written to {OUT}")
 
 

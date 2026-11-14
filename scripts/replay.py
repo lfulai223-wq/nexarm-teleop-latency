@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 from nexarm_teleop import FOLLOWER_PORT  # noqa: E402
 from nexarm_teleop.driver import NexArmPort  # noqa: E402
+from nexarm_teleop.filters import LowPassFilter, OneEuroFilter  # noqa: E402
 from nexarm_teleop.latency import best_lag_ms, summarize, windowed_lags_ms  # noqa: E402
 from nexarm_teleop.predictor import LinearPredictor  # noqa: E402
 from nexarm_teleop.protocol import JOINT_COUNT, map_leader_to_follower  # noqa: E402
@@ -49,6 +50,9 @@ def main() -> None:
     ap.add_argument("--rate", type=float, default=50.0, help="控制频率 (Hz)")
     ap.add_argument("--lookahead", type=float, nargs="+", default=[0.0],
                     help="前馈预测的前瞻时长 (ms)，0 为关闭。给 1 个值表示各关节相同，给 6 个值表示逐关节设置")
+    ap.add_argument("--one-euro", type=float, nargs=2, metavar=("MINCUTOFF_HZ", "BETA"), default=None,
+                    help="在预测之前加 OneEuro 滤波，例如 --one-euro 3 0.004")
+    ap.add_argument("--lowpass", type=float, default=0.0, help="在预测之前加固定截止低通 (Hz)，0 为关闭")
     ap.add_argument("--vel-cutoff", type=float, default=5.0, help="速度估计的低通截止频率 (Hz)")
     ap.add_argument("--skip", type=float, default=2.5, help="跳过轨迹开头多少秒（原日志的启动过渡段）")
     ap.add_argument("--ramp", type=float, default=2.0, help="先用多少秒把从臂移到轨迹起点")
@@ -68,6 +72,9 @@ def main() -> None:
     la_list = [x / 1000.0 for x in (args.lookahead if per_joint else args.lookahead * JOINT_COUNT)]
     la_text = "逐关节 " + "/".join(f"{x:g}" for x in args.lookahead) if per_joint else f"{args.lookahead[0]:g}"
     predictor = LinearPredictor(JOINT_COUNT, la_list, args.vel_cutoff, max_lead=150.0) if max(la_list) > 0 else None
+
+    one_euro = OneEuroFilter(JOINT_COUNT, *args.one_euro) if args.one_euro else None
+    lowpass = LowPassFilter(JOINT_COUNT, args.lowpass) if args.lowpass > 0 else None
 
     def target_at(t: float) -> list[float]:
         return [float(np.interp(t, t_traj, target[:, j])) for j in range(JOINT_COUNT)]
@@ -103,7 +110,13 @@ def main() -> None:
                 break
             ref = target_at(now)
             t_ref_ns = time.perf_counter_ns()
-            want = predictor.step(ref, now) if predictor else ref
+            want = ref
+            if one_euro is not None:
+                want = one_euro.step(want, now)
+            if lowpass is not None:
+                want = lowpass.step(want, now)
+            if predictor is not None:
+                want = predictor.step(want, now)
             cmd = [c + max(-args.max_step, min(args.max_step, w - c)) for c, w in zip(last_cmd, want)]
             if any(abs(c - w) > 0.5 for c, w in zip(cmd, want)):
                 clamped += 1

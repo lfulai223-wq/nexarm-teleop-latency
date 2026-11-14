@@ -42,3 +42,23 @@ def test_predictor_leads_by_roughly_the_lookahead():
     out = np.array([p.step([x], t)[0] for x, t in zip(REF, T)])
     lag, _ = best_lag_ms(T, REF, T, out)  # 预测输出应当超前于输入
     assert -90 <= lag <= -60
+
+
+def test_lowpass_delays_a_slow_signal_by_about_its_time_constant():
+    from nexarm_teleop.filters import LowPassFilter
+
+    f = LowPassFilter(1, cutoff_hz=5.0)
+    out = np.array([f.step([x], t)[0] for x, t in zip(REF, T)])
+    lag, _ = best_lag_ms(T, REF, T, out)
+    tau_ms = 1000.0 / (2 * np.pi * 5.0)  # 约 32 ms；对低频信号，一阶低通的群延迟接近时间常数
+    assert abs(lag - tau_ms) < 8
+
+
+def test_one_euro_holds_still_and_follows_motion():
+    from nexarm_teleop.filters import OneEuroFilter
+
+    rng = np.random.default_rng(0)
+    f = OneEuroFilter(1, mincutoff_hz=1.0, beta=0.004)
+    noisy = 2000 + rng.normal(0, 2.0, size=500)  # 静止加 2 计数噪声
+    out = np.array([f.step([x], t)[0] for x, t in zip(noisy, T[:500])])
+    assert out[100:].std() < 0.5 * noisy[100:].std()
