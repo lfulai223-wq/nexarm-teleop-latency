@@ -11,8 +11,8 @@ The bars show how far each arm has got through the move, from tracking the
 video. With prediction the follower is further along at every moment, and
 overshoots at the end.
 
-**Status:** the driver, measurement tools, compensation, a video check and a
-LeRobot plugin are done. See [what is not done yet](#limitations-and-open-items).
+**Status:** complete as a first project: driver, measurement tools,
+compensation, a video check, and a LeRobot plugin verified on the hardware. See [what is not done yet](#limitations-and-open-items).
 
 ## Result so far
 
@@ -231,6 +231,11 @@ lerobot-teleoperate \
   --teleop.type=nexarm_leader_predictive --teleop.port=<leader port> \
   --fps=50
 ```
+
+Checked on the hardware with the stock `lerobot-teleoperate`: the plugin is
+picked up automatically, the loop holds 50 Hz, the follower tracks the leader
+and overshoots slightly on hard stops, as expected with prediction. Latency
+was not measured separately inside the LeRobot loop.
 
 Unlike `scripts/teleop.py`, LeRobot does not check that the two arms start in
 the same pose. Line them up before starting. Offline tests:
