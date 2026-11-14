@@ -22,6 +22,21 @@ Joints 1–5 pooled, 366 two-second windows per row, three replays of the same
 40 s recorded trajectory. One count is 1/4096 of a revolution. Conditions and
 caveats are below; they matter.
 
+**Checked against high-speed video.** The figures above come from positions
+read back over the serial link being measured, and from replays that skip the
+real leader. Filming live teleoperation at 240 fps (base-joint flicks of about
+25°) gives the true end-to-end delay, from the leader physically moving to the
+follower physically moving, at the 50% point of each move:
+
+| Configuration | Video (ground truth) | Serial log, same runs |
+|---|---|---|
+| No prediction | 100.1 ms ±11.2 (12 moves) | 86.4 ms ±1.7 |
+| Per-joint lookahead | 68.6 ms ±12.3 (9 moves) | 51.9 ms ±3.8 |
+
+The serial log reads 14–17 ms low, about the time it takes to read the leader,
+which it cannot see. Prediction saves about 31 ms end to end; the price is
+follower overshoot rising from about 12% to about 32% of the move.
+
 ![Lag, tracking error and jitter against prediction lookahead](docs/img/lookahead_sweep.png)
 
 Lag falls roughly linearly with lookahead. Tracking error bottoms out near
@@ -88,7 +103,7 @@ lead.
 | [nexarm_teleop/driver.py](nexarm_teleop/driver.py) | Serial driver with timestamps on every transfer |
 | [nexarm_teleop/predictor.py](nexarm_teleop/predictor.py) | Linear feedforward prediction, per-joint lookahead |
 | [nexarm_teleop/latency.py](nexarm_teleop/latency.py) | Time-shift lag estimation, stale-reading detection |
-| [scripts/](scripts/) | Hardware checks, teleoperation, step response, replay, analysis, figures |
+| [scripts/](scripts/) | Hardware checks, teleoperation, step response, replay, analysis, video check, figures |
 | [tests/](tests/) | Unit tests that need no hardware |
 | [results/](results/) | Summary tables behind the numbers above |
 | [docs/roadmap.md](docs/roadmap.md) | Plan and the full measurement log, including dead ends (Chinese) |
@@ -111,8 +126,11 @@ python3 -m venv .venv
 .venv/bin/python scripts/replay.py results/logs/teleop_XXXX.csv --lookahead 80
 .venv/bin/python scripts/replay.py results/logs/teleop_XXXX.csv --lookahead 65 110 80 65 95 0
 .venv/bin/python scripts/analyze_replay.py results/logs/batch2/replay_la*.csv
+.venv/bin/python scripts/video_latency.py media/flick_none.MOV --log results/logs/teleop_XXXX.csv
 .venv/bin/python scripts/make_figures.py
 ```
+
+The video check needs `opencv-python-headless` as well.
 
 Port paths are set in [nexarm_teleop/\_\_init\_\_.py](nexarm_teleop/__init__.py)
 and are specific to one machine: the two boards have identical USB-serial
@@ -140,11 +158,13 @@ aborts if a joint stops short of its target.
 
 ## Limitations and open items
 
-- **The lag excludes the leader read.** Replay bypasses the real leader, so
-  about 14 ms of acquisition is not in the numbers above.
-- **No external ground truth yet.** Positions are read back over the same
-  serial link whose delay is being measured. A high-speed video check is
-  planned.
+- **Replay lag excludes the leader read.** Replay bypasses the real leader;
+  the video check puts the missing part at 14–17 ms.
+- **The video check is coarse.** One joint, about ten moves per configuration,
+  no markers on the arms. Per-move scatter is ±11–12 ms and the two flick
+  directions differ by about 18 ms in the video but only 2 ms in the log, so
+  the tracking has a direction-dependent error. Treat the means, not single
+  moves, as the result.
 - **Moderate motion only.** No fast moves or hard stops, and overshoot is not
   measured separately.
 - **The gripper is not compensated.** Its lag is about 140 ms and is set by
