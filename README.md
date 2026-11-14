@@ -214,8 +214,9 @@ driver's own read-only Feetech packets to the leader's USB port shows that
 the leader forwards them to the servo bus and returns the replies, and the
 servos speak the Feetech STS protocol. Five of six report model 777
 (STS3215); the wrist-roll servo reports 258, so the stock `so101_leader` is
-expected to stop at its model check. The follower has not been probed in its
-normal mode yet. Details, register dump and caveats:
+expected to stop at its model check. The follower does not pass servo replies
+back to USB at all (no answer to PING, READ or SYNC_READ), so the stock
+`so101_follower` cannot connect. Details, register dump and caveats:
 [docs/compatibility.md](docs/compatibility.md) (Chinese).
 
 ## Background

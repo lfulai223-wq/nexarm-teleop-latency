@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from nexarm_teleop import FOLLOWER_PORT, LEADER_PORT  # noqa: E402
-from nexarm_teleop.protocol import CMD_FIRMWARE_VERSION, FrameParser, build_frame  # noqa: E402
+from nexarm_teleop.protocol import CMD_READ_POS, FrameParser, build_frame  # noqa: E402
 
 # 飞特 SCS/STS 协议：FF FF ID LEN INSTR PARAMS CHECKSUM，校验和为 ID 到最后一个参数求和取反
 INSTR_PING = 0x01
@@ -69,9 +69,12 @@ def read_u16(port: serial.Serial, servo_id: int, addr: int) -> int | None:
 
 
 def in_bridge_mode(port: serial.Serial) -> bool:
-    """从臂普通模式下会回复版本查询，桥接模式下不会。"""
-    raw = exchange(port, build_frame(CMD_FIRMWARE_VERSION), 0.3)
-    return not any(f.cmd == CMD_FIRMWARE_VERSION for f in FrameParser().feed(raw))
+    """只有桥接模式下从臂才回复 96 号读位置指令；普通模式下不回复。
+
+    （版本查询不是可靠的判据：刚上电时普通模式下它也可能不回复。）
+    """
+    raw = exchange(port, build_frame(CMD_READ_POS), 0.3)
+    return any(f.cmd == CMD_READ_POS for f in FrameParser().feed(raw))
 
 
 def probe(name: str, path: str, check_mode: bool) -> None:
