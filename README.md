@@ -4,8 +4,15 @@ Measuring and reducing latency in leader–follower teleoperation of a NexArm
 6-DOF bus-servo arm, with the PC in the loop: read the leader, process, write
 the follower, all timestamped on one clock.
 
-**Status:** work in progress. The driver, measurement tools and a first
-compensation result are done. See [what is not done yet](#limitations-and-open-items).
+![Leader and follower during one base flick, without and with prediction, 10x slower](docs/img/demo.gif)
+
+One base-joint flick filmed at 240 fps, aligned on the leader starting to move.
+The bars show how far each arm has got through the move, from tracking the
+video. With prediction the follower is further along at every moment, and
+overshoots at the end.
+
+**Status:** the driver, measurement tools, compensation, a video check and a
+LeRobot plugin are done. See [what is not done yet](#limitations-and-open-items).
 
 ## Result so far
 
@@ -241,11 +248,22 @@ back to USB at all (no answer to PING, READ or SYNC_READ), so the stock
 `so101_follower` cannot connect. Details, register dump and caveats:
 [docs/compatibility.md](docs/compatibility.md) (Chinese).
 
-## Background
+## Same method on two systems
 
-This applies a measure-then-compensate method used earlier on a different
-pair of arms (an Alicia-D leader driving a FAIRINO FR3 over `ServoJ`,
-[leader-follower-teleop](https://github.com/lfulai223-wq/leader-follower-teleop)).
-The hardware, the protocol and where the delay sits are all different here,
-so nothing was carried over as a number; everything above was measured on
-NexArm.
+The measure-then-compensate approach was first used during an internship on an
+Alicia-D leader driving a FAIRINO FR3 industrial arm
+([leader-follower-teleop](https://github.com/lfulai223-wq/leader-follower-teleop)).
+Repeating it on NexArm gave the opposite answer on filtering, because the delay
+sits somewhere else.
+
+| | Alicia-D → FAIRINO FR3 (internship) | NexArm (this repository) |
+|---|---|---|
+| Follower | 6-DOF industrial arm, `ServoJ` at 125 Hz over Ethernet | Bus-servo arm, position commands over USB serial at 50 Hz |
+| Where the delay sat | PC-side smoothing: two filters and a critically damped spring | Inside the servos: about 86 ms from command to 50% of a move; PC processing under 0.1 ms |
+| What was measured | Leader displacement to commanded displacement (2° threshold probe); the robot's own motion not included | Leader motion to follower motion (240 fps video), plus serial logs and replays |
+| What worked | Loosening the smoothing (higher filter cutoff, stiffer spring) plus a 10 ms lookahead: 102 → 65 ms | Feedforward prediction with per-joint lookahead of 65–110 ms: about 100 → 69 ms end to end |
+| Input filters | Part of the solution: they kept the industrial arm smooth | Added about 56 ms for a 20% jitter reduction; dropped |
+
+The two sets of numbers are not comparable with each other: they measure
+different spans of the chain. Nothing was carried over as a number; everything
+about NexArm above was measured on NexArm.
