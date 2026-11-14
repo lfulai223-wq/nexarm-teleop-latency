@@ -229,3 +229,6 @@ notes/
 
 # Raw experiment logs (large, regenerate locally)
 results/logs/
+
+# Raw video (large; may show people)
+media/

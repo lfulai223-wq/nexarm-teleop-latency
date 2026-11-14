@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 
 from nexarm_teleop import FOLLOWER_PORT, LEADER_PORT  # noqa: E402
 from nexarm_teleop.driver import NexArmPort  # noqa: E402
+from nexarm_teleop.predictor import LinearPredictor  # noqa: E402
 from nexarm_teleop.protocol import JOINT_COUNT, map_leader_to_follower  # noqa: E402
 
 CORRUPT_MARGIN = 5
@@ -46,12 +47,19 @@ def main() -> None:
     ap.add_argument("--ramp", type=float, default=2.0, help="启动过渡时间（秒）")
     ap.add_argument("--acc", type=int, default=100, help="舵机加速度参数 0–254（0 为不限）")
     ap.add_argument("--speed", type=int, default=2000, help="舵机速度上限（0 为不限）")
+    ap.add_argument("--lookahead", type=float, nargs="+", default=[0.0],
+                    help="前馈预测的前瞻时长 (ms)，0 为关闭。给 1 个值表示各关节相同，给 6 个值表示逐关节设置")
+    ap.add_argument("--vel-cutoff", type=float, default=5.0, help="速度估计的低通截止频率 (Hz)")
     ap.add_argument("--no-read-follower", action="store_true", help="不读从臂位置（更快，但日志里没有从臂实际位置）")
     ap.add_argument("--stay", action="store_true", help="结束后留在桥接模式，不重启从臂")
     ap.add_argument("--log-dir", type=Path, default=ROOT / "results" / "logs")
     args = ap.parse_args()
 
     period = 1.0 / args.rate
+    if len(args.lookahead) not in (1, JOINT_COUNT):
+        raise SystemExit(f"--lookahead 需要 1 个或 {JOINT_COUNT} 个值")
+    la = [x / 1000.0 for x in (args.lookahead if len(args.lookahead) == JOINT_COUNT else args.lookahead * JOINT_COUNT)]
+    predictor = LinearPredictor(JOINT_COUNT, la, args.vel_cutoff, max_lead=150.0) if max(la) > 0 else None
     args.log_dir.mkdir(parents=True, exist_ok=True)
     log_path = args.log_dir / f"teleop_{datetime.now():%Y%m%d_%H%M%S}.csv"
 
@@ -75,8 +83,9 @@ def main() -> None:
         start_target = map_leader_to_follower(leader.read_positions().positions)
         diff = [abs(a - b) for a, b in zip(start_follower, start_target)]
         print(f"从臂当前 {start_follower}\n主臂目标 {start_target}\n姿态差   {diff}")
-        if max(diff) > args.max_start_diff:
-            raise SystemExit(f"姿态差 {max(diff)} 超过 {args.max_start_diff}，拒绝启动。请把两条臂摆成相近的姿态。")
+        # 夹爪不参与这项检查：它开合幅度大、不会撞到东西，启动过渡会把它慢慢带到位
+        if max(diff[:5]) > args.max_start_diff:
+            raise SystemExit(f"关节姿态差 {max(diff[:5])} 超过 {args.max_start_diff}，拒绝启动。请把两条臂摆成相近的姿态。")
 
         follower.set_motion_params(args.acc, args.speed)
         follower.set_torque(True)
@@ -86,7 +95,8 @@ def main() -> None:
         t_start = time.perf_counter()
         next_tick = t_start
         cycle = 0
-        print(f"开始遥操作 {args.duration:.0f} 秒，目标 {args.rate:.0f} Hz。Ctrl+C 停止。")
+        la_text = "关闭" if predictor is None else "/".join(f"{x:g}" for x in args.lookahead) + " ms"
+        print(f"开始遥操作 {args.duration:.0f} 秒，目标 {args.rate:.0f} Hz，预测前瞻 {la_text}。Ctrl+C 停止。")
         while True:
             now = time.perf_counter()
             elapsed = now - t_start
@@ -109,6 +119,10 @@ def main() -> None:
                 last_leader = leader_pos
 
             target = map_leader_to_follower(leader_pos)
+            if predictor is not None:
+                # 用读到主臂位置的时刻（请求和回复的中点）作为这次采样的时间
+                t_sample = (reading.t_request_ns + reading.t_reply_ns) / 2e9
+                target = [round(x) for x in predictor.step([float(v) for v in target], t_sample)]
             # 启动过渡：从"从臂起始位置"线性混合到"主臂目标"
             if elapsed < args.ramp:
                 a = elapsed / args.ramp
