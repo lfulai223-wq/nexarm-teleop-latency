@@ -90,6 +90,8 @@ is the reference row.
 | Input filters (One Euro 3 Hz + 5 Hz low-pass) | 139.9 ms | 174.8 ms | 43.9 | jitter 1.58 → 1.24 |
 | Input filters + per-joint lookahead | 71.7 ms | 107.4 ms | 24.3 | |
 | Per-joint lookahead from a fitted search | 18.1 ms | 48.0 ms | 12.9 | wrist roll over-compensated (0.4 ms) |
+| Per-joint lookahead (same-session control for the next row) | 20.0 ms | 47.0 ms | 12.0 | jitter 1.80 |
+| Light 15 Hz low-pass + per-joint lookahead | 29.2 ms | 58.5 ms | 13.7 | jitter 1.71 |
 
 - **Rate.** Doubling from 50 to 100 Hz saves about 7 ms, roughly half of the
   10 ms shorter period, and does not change smoothness (acceleration RMS on a
@@ -97,11 +99,36 @@ is the reference row.
   reading the leader takes 14 ms, which caps the loop near 70 Hz, or 54 Hz when
   the follower is also read back.
 - **Filters.** The filters carried over from the earlier system add about
-  56 ms and buy a 20% jitter reduction. The leader's encoder signal is already
-  clean, so they are not worth it here at these settings.
+  56 ms and buy a 20% jitter reduction. A light 15 Hz low-pass in front of
+  the prediction adds 9 ms and cuts follower jitter by only 5%. Offline, on
+  the commands sent to the follower, the same filter cuts jitter by about 25%
+  against simply shortening the lookahead to the same lead; the servo smooths
+  away most of that difference. The leader's encoder barely moves at rest (1–2
+  counts), so there is little to filter. No input filter on NexArm.
+  Offline sweep: [scripts/filter_sweep.py](scripts/filter_sweep.py).
 - **Searching the lookahead.** Fitting each joint's optimum from the sweep did
   not beat the hand-set values; the fit extrapolated past the measured range
   for the two slowest joints.
+
+## Fast motion
+
+A third recorded trajectory with joint speeds two to three times higher
+(peaks of about 230–570 °/s), replayed twice per setting, joints 1–5 pooled:
+
+| Configuration | Mean lag | P95 lag | Tracking error (RMS) | Jitter (RMS) |
+|---|---|---|---|---|
+| No prediction | 82.2 ms | 109.8 ms | 49.7 counts | 3.09 counts |
+| Per-joint lookahead | 47.5 ms | 67.0 ms | 40.2 counts | 4.66 counts |
+
+- Without prediction the lag in time is the same as on moderate motion
+  (82–84 ms), but the position error nearly doubles: the same delay costs
+  more distance when the arm moves faster.
+- Prediction helps less: it removes 35 ms of lag here against 63–65 ms on
+  moderate motion, and cuts tracking error by 19% against 57%.
+- The cap on the lead and the per-cycle step limit are not the reason. Offline,
+  removing both adds only about 3 ms of lead, and raising the velocity filter
+  from 5 to 20 Hz adds 7 ms. The likely cause is the many hard starts and
+  stops, where linear extrapolation overshoots; that part is not verified.
 
 ## How it works
 
@@ -162,11 +189,14 @@ python3 -m venv .venv
 .venv/bin/python scripts/replay.py results/logs/teleop_XXXX.csv --lookahead 80
 .venv/bin/python scripts/replay.py results/logs/teleop_XXXX.csv --lookahead 65 110 80 65 95 0
 .venv/bin/python scripts/analyze_replay.py results/logs/batch2/replay_la*.csv
+.venv/bin/python scripts/filter_sweep.py results/logs/teleop_XXXX.csv    # offline, no hardware
 .venv/bin/python scripts/video_latency.py media/flick_none.MOV --log results/logs/teleop_XXXX.csv
 .venv/bin/python scripts/make_figures.py
 ```
 
 The video check needs `opencv-python-headless` as well.
+`scripts/official_lerobot_check.py` runs in an environment with LeRobot and
+`feetech-servo-sdk` installed.
 
 Port paths are set in [nexarm_teleop/\_\_init\_\_.py](nexarm_teleop/__init__.py)
 and are specific to one machine: the two boards have identical USB-serial
@@ -187,7 +217,7 @@ aborts if a joint stops short of its target.
   defaults). On a 10° step these made no measurable difference.
 - No payload. Arm clear of the table.
 - Trajectories are hand-dragged leader motion, replayed: peak joint speed about
-  130–200 °/s.
+  130–200 °/s, except the fast-motion trajectory (about 230–570 °/s).
 - Lag is fitted on two-second windows with a one-second hop, keeping windows
   with at least 80 counts of motion.
 - Timestamps for a position are the midpoint of its request and reply.
@@ -201,8 +231,9 @@ aborts if a joint stops short of its target.
   directions differ by about 18 ms in the video but only 2 ms in the log, so
   the tracking has a direction-dependent error. Treat the means, not single
   moves, as the result.
-- **Moderate motion only.** No fast moves or hard stops, and overshoot is not
-  measured separately.
+- **Overshoot is measured only in the video check** (base joint, flicks),
+  not in the replays. The fast-motion replay has hard stops, but the lag
+  figure folds overshoot into the fitted time shift.
 - **The gripper is not compensated.** Its lag is about 140 ms and is set by
   rate limiting, not by anything prediction can fix: the leader gripper maps
   to the follower with a gain of 4.
@@ -212,8 +243,6 @@ aborts if a joint stops short of its target.
 - **Per-joint lookahead values were set by hand** from one measurement. A
   fitted search was tried and did no better; a proper search would sweep each
   joint past 100 ms.
-- Not done: lighter filter settings that might trade less delay for the
-  jitter reduction.
 
 ## Using the prediction inside LeRobot
 
