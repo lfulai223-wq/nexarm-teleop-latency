@@ -247,8 +247,17 @@ The vendor says the servos are SO-101 / LeRobot compatible. Sending the stock
 driver's own read-only Feetech packets to the leader's USB port shows that
 the leader forwards them to the servo bus and returns the replies, and the
 servos speak the Feetech STS protocol. Five of six report model 777
-(STS3215); the wrist-roll servo reports 258, so the stock `so101_leader` is
-expected to stop at its model check. The follower does not pass servo replies
+(STS3215); the wrist-roll servo reports 258.
+
+Running the stock driver's own connect code (`SO101Leader.connect()`, the
+same path `lerobot-teleoperate --teleop.type=so101_leader` takes) confirms it:
+the handshake stops at the model check (`5 (wrist_roll): expected 777, found
+258`), and the next check, that all servos run the same firmware, fails too
+(1.3 on the wrist roll, 3.15 on the rest). The script lets only read-only
+packets through, so nothing is written to the servos:
+[scripts/official_lerobot_check.py](scripts/official_lerobot_check.py).
+
+The follower does not pass servo replies
 back to USB at all (no answer to PING, READ or SYNC_READ), so the stock
 `so101_follower` cannot connect. Details, register dump and caveats:
 [docs/compatibility.md](docs/compatibility.md) (Chinese).
