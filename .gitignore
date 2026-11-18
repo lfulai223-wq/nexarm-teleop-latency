@@ -222,8 +222,7 @@ __marimo__/
 # Vendor-supplied NexArm package (local only, not for publication)
 vendor-nexarm/
 
-# Personal job-hunting notes (local only, never publish)
-机器人求职补强项目清单.docx
+# Private documents and notes (local only, never publish)
 *.docx
 notes/
 
